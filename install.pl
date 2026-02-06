@@ -54,8 +54,6 @@ if($shell =~ /zsh/){
 	}
 }
 
-
-
 if($new !~ /no/){
 	print STDERR "making backup of .bashrc,$shellconf and .cshrc and removing all entries of mirdeep in those files\n";
 	rem_mirdeep(".bashrc");
@@ -72,7 +70,6 @@ if(not $grep){
 	die "No grep found on system\n";
 }
 chomp $grep;
-
 
 my $gcc=`gcc --version 2>&1`;
 if($gcc !~ /(GCC)/i and $gcc !~ /clang/i){
@@ -108,7 +105,6 @@ my $dopt='';
 
 if($wget =~ /URL/i){
 	$dtool ="wget";
-
 }elsif($curl){
 	$dtool ="curl -L"; ## forces curl to follow redirections
 	$dopt=" -O";
@@ -126,14 +122,11 @@ if(not -d 'bin'){
 	}
 }
 
-
 my $err;
 my $dfile='';
 
 ##only attach to config file if not yet existing
 my $in=`$grep "$dir/bin" ~/.bashrc`;
-
-
 
 ## set install dir
 my $install_bin_dir="$dir/bin";
@@ -220,7 +213,7 @@ if(not $g){
 }
 
 my $in2;
-if(-f "~/.cshrc"){
+if(-f "$ENV{'HOME'}/.cshrc"){
 	$in2=`$grep "$install_bin_dir" ~/.cshrc`;
 	if(not $in2){
 		`echo 'setenv PATH \$PATH:$install_bin_dir' >> ~/.cshrc`;
@@ -263,7 +256,6 @@ if($bv =~ /(\d\.\d)\.0/){
 	$bv=$1;
 }
 
-
 my $ret=checkBIN("bowtie","Usage");
 if($ret == 0){
 	print STDERR "bowtie                                           already installed, nothing to do ...\n";
@@ -271,8 +263,6 @@ if($ret == 0){
 }else{
 	if(not -d "bowtie-$bowtie_version"){
 		## this needed to be added cause the authors removed the 0 in the version number for the filename
-
-
 		print STDERR "Downloading bowtie $bowtie_version binaries\n\n";
 		if($a =~ /Darwin/i){ ## download mac version
 			$bowtie = "bowtie-$bv-macos-x86_64.zip";
@@ -282,32 +272,24 @@ if($ret == 0){
 			$bowtie = "bowtie-$bv-src.zip";
 		}
 
+		# ---- FIX: avoid hard-coded mirrors and always save the correct filename ----
 		if(not -f $bowtie){
-			if(check("http://netcologne.dl.sourceforge.net/project/bowtie-bio/bowtie/$bowtie_version/$bowtie")){
-				$err=system("$dtool http://netcologne.dl.sourceforge.net/project/bowtie-bio/bowtie/$bowtie_version/$bowtie $dopt");
+			my $url_new = "https://sourceforge.net/projects/bowtie-bio/files/bowtie/$bowtie_version/$bowtie/download";
+			my $url_old = "https://sourceforge.net/projects/bowtie-bio/files/bowtie/old/$bowtie_version/$bowtie/download";
 
-				if($err){
-					die "\nError:\n\t$bowtie could not be downloaded\n\n\n";
-				}
-			}elsif(check("http://netcologne.dl.sourceforge.net/project/bowtie-bio/bowtie/old/$bowtie_version/$bowtie")){
-				$err=system("$dtool http://netcologne.dl.sourceforge.net/project/bowtie-bio/bowtie/old/$bowtie_version/$bowtie $dopt");
-				if($err){
-					die "\nError:\n\t$bowtie could not be downloaded\n\n\n";
-				}
-			}elsif(check("https://sourceforge.net/projects/bowtie-bio/files/bowtie/$bowtie_version/$bowtie",$bowtie)){
-				if(not -f $bowtie){
-					$err=system("$dtool https://sourceforge.net/projects/bowtie-bio/files/bowtie/$bowtie_version/$bowtie $dopt");
-				}else{
-					$err=0;
-				}
-				if($err){
-					die "\nError:\n\t$bowtie could not be downloaded\n\n\n";
-				}
+			$err = dl_to_file($url_new, $bowtie);
 
-			}else{
-				die "\nError:\n\t$bowtie not found on server http://netcologne.dl.sourceforge.net/project/bowtie-bio/bowtie/ \n\n\n";
+			# if download failed or looks too small (often HTML), try the old/ path
+			if($err || !-f $bowtie || -s $bowtie < 100000){
+				unlink $bowtie if(-f $bowtie);
+				$err = dl_to_file($url_old, $bowtie);
+			}
+
+			if($err || !-f $bowtie || -s $bowtie < 100000){
+				die "\nError:\n\t$bowtie could not be downloaded\n\tTried:\n\t$url_new\n\t$url_old\n\n\n";
 			}
 		}
+		# --------------------------------------------------------------------------
 
 		if(not -f "$bowtie"){
 			die "$bowtie download failed \nPlease try to download bowtie manually from here http://bowtie-bio.sourceforge.net/index.shtml";
@@ -329,7 +311,6 @@ if($ret == 0){
 		system("ln -s $dir/essentials/bowtie-$bv/bowtie* .");
 	}
 	chdir "$dir/essentials/";
-
 }
 
 $ret = checkBIN("RNAfold -h","usage");
@@ -387,10 +368,8 @@ if($ret == 0){
         `cp $PATCH/${i}_patch.h $i.h`;
         chdir "../lib";
 
-
         print STDERR "compiling libRNA.a\n"; 
         `make libRNA.a 2>> ../install_error.log`;
-
 
         my $ok=1;
         if(not -f "libRNA.a"){
@@ -417,7 +396,6 @@ if($ret == 0){
             print STDERR "building RNAfold tool done\n";
         }
 
-
 		buildgood("$dir/essentials/ViennaRNA-1.8.4/install_dir/bin/RNAfold","RNAfold");
 
 		chdir("..");
@@ -429,38 +407,12 @@ if($ret == 0){
 	}
 }
 
-#$in = `$grep "$dir/essentials/ViennaRNA-1.8.4/install_dir/bin:*" ~/.bashrc`;
-#if(not $in){
-#    print STDERR "Vienna package path has been added to \$PATH variable\n";
-#    `echo 'export PATH=\$PATH:$dir/essentials/ViennaRNA-1.8.4/install_dir/bin' >> ~/.bashrc`;
-#}
-
-#$in = `$grep "$dir/essentials/ViennaRNA-1.8.4/install_dir/bin:*" ~/$shellconf`;
-#if(not $in){
-#    print STDERR "Vienna package path has been added to \$PATH variable\n";
-#    `echo 'export PATH=\$PATH:$dir/essentials/ViennaRNA-1.8.4/install_dir/bin' >> ~/$shellconf`;
-#}
-
-
-
-#$in2 = `$grep "$dir/essentials/ViennaRNA-1.8.4/install_dir/bin:*" ~/.cshrc`;
-#if(not $in2){
-#`echo 'setenv PATH \$PATH:$dir/essentials/ViennaRNA-1.8.4/install_dir/bin' >> ~/.cshrc`;
-#}
-
-
-
-
 $ret = checkBIN("randfold","let7");
 
-#my $randf = `randfold -h`;
-
-#if($randf =~ /no\s*randfold/i){ ## this should work
 if($ret == 0){
 	print STDERR "randfold\t\t\t\t\t already installed, nothing to do ...\n";
 	$progs{randfold}=1;
 }else{
-
 	$dfile="squid-1.9g.tar.gz";
 	if(not -f $dfile){
 		print STDERR "Downloading SQUID library now\n\n";
@@ -523,7 +475,6 @@ if($ret == 0){
 		close OUT;
 
 		## added so we can make it run on MacOSX as well.
-
 		open IN,"<fold.c" or die "File fold.c not found\n";
 		open OUT,">fold.c.new" or die "Cannot generate file fold.c.new\n";
 		while(<IN>){
@@ -537,7 +488,6 @@ if($ret == 0){
 		}
 		close OUT;
 
-
 		`mv fold.c fold.c.orig`;
 		`mv fold.c.new fold.c`;
 
@@ -549,30 +499,12 @@ if($ret == 0){
 		chdir("..");
 	}
 
-#    $in = `$grep "$dir/essentials/randfold-2.0:*" ~/.bashrc`;
-#    if(not $in){
-#        print STDERR "Randfold path has been added to \$PATH variable\n";
-#        `echo 'export PATH=\$PATH:$dir/essentials/randfold-2.0' >> ~/.bashrc`;
-#    }
-
-#    $in = `$grep "$dir/essentials/randfold-2.0:*" ~/$shellconf`;
-#    if(not $in){
-#        print STDERR "Randfold path has been added to \$PATH variable\n";
-#        `echo 'export PATH=\$PATH:$dir/essentials/randfold-2.0' >> ~/$shellconf`;
-#}
-
-
-#    $in2 = `$grep "$dir/essentials/randfold-2.0:*" ~/.cshrc`;
-#    if($in2){
-	#`echo 'setenv PATH \$PATH:$dir/essentials/randfold-2.0' >> ~/.cshrc`;
-	#    }
 	chdir "$install_bin_dir";
 	if(not -f "randfold"){
 		system("ln -s $dir/essentials/randfold-2.0/randfold .");
 	}
 	chdir "$dir/essentials/"
 }
-
 
 ##check for zlib perl
 my $zlib=`perl -e 'use Compress::Zlib;' 2>&1`;
@@ -582,11 +514,7 @@ if(not $zlib){
 	$progs{zlib}=1;
 }else{
 	die "please install Compress::Zlib by using CPAN before you proceed\n";
-
 }
-
-#my $pdfapi=`perl -e 'use PDF::API2;' 2>&1`;
-
 
 $ret = checkBIN("perl -e \'use Font::TTF; print \"installed\";\'","installed");
 
@@ -635,7 +563,7 @@ if($ret == 0){
 	}
 	close IN;
 
-	`make install 1>>../install.log 2>>..install_error.log`;
+	`make install 1>>../install.log 2>>../install_error.log`;
 
 	$ret = checkBIN("perl -e \'use Font::TTF; print \"installed\";\'","installed");
 
@@ -646,8 +574,6 @@ if($ret == 0){
 
 	chdir("..");
 }
-
-
 
 $ret = checkBIN("perl -e \'use PDF::API2; print \"installed\";\'","installed");
 
@@ -681,7 +607,7 @@ if($ret == 0){
 	chdir("$version");
 
 	`perl Makefile.PL INSTALL_BASE=$ENV{'HOME'}/perl5 LIB=$dir/lib/perl5`;
-	`make 1>>../install.log 2>>..install_error.log`;
+	`make 1>>../install.log 2>>../install_error.log`;
 	`mv Makefile Makefile.orig`;
 
 	open IN,"Makefile.orig" or die "No Makefile found\n";
@@ -695,7 +621,7 @@ if($ret == 0){
 	}
 	close IN;
 
-	`make install 1>>../install.log 2>>..install_error.log`;
+	`make install 1>>../install.log 2>>../install_error.log`;
 
 	$ret = checkBIN("perl -e \'use PDF::API2; print \"installed\";\'","installed");
 
@@ -731,9 +657,7 @@ if($sum == 6){
 	";
 }
 
-
 exit;
-
 
 sub rem_mirdeep{
 	my ($file)=@_;
@@ -755,7 +679,6 @@ sub rem_mirdeep{
 					}
 				}
 				if($file !~ /.cshrc/){
-
 					if($tmp !~ /PATH=\$PATH$/ and $tmp !~ /PERL5LIB=\$PERL5LIB\s*$/){
 						print OUT "$tmp\n";
 					}
@@ -773,7 +696,6 @@ sub rem_mirdeep{
 	}
 }
 
-
 sub checkBIN{
 	my ($a,$b) = @_;
 	my $e = system("$a> tmp 2>tmp2");
@@ -783,7 +705,6 @@ sub checkBIN{
 	while(<IN>){
 		if(/$b/i){
 			$found =0;
-
 		}
 	}
 	close IN;
@@ -792,14 +713,12 @@ sub checkBIN{
 		while(<IN>){
 			if(/$b/i){
 				$found =0;
-
 			}
 		}
 	}
 	close IN;
 	return $found;
 }
-
 
 sub check{
 	my ($url,$file) = @_;
@@ -821,7 +740,6 @@ sub check{
 				$out=0;
 			}
 		}
-
 	}else{
 		die "No download tool found\nplease install wget or curl\n";
 	}
@@ -832,7 +750,6 @@ sub check{
 		return 1;
 	}
 }
-
 
 sub buildgood{
 	if(-f $_[0]){
@@ -845,4 +762,23 @@ sub buildgood{
 	}
 }
 
+# Download helper that ALWAYS saves to the requested filename
+# (fixes SourceForge /download being saved as "download")
+sub dl_to_file {
+	my ($url, $outfile) = @_;
 
+	unlink $outfile if(-f $outfile);
+
+	my $ret;
+	if($dtool =~ /^wget\b/){
+		# Force output name (avoids saving as "download")
+		$ret = system('wget','-O',$outfile,$url);
+	}elsif($dtool =~ /curl/){
+		# Follow redirects and force output name
+		$ret = system('curl','-L','-o',$outfile,$url);
+	}else{
+		die "No commandline download tool found on your system. Please install wget or curl on your machine\n";
+	}
+
+	return $ret;
+}
