@@ -54,8 +54,6 @@ if($shell =~ /zsh/){
 	}
 }
 
-
-
 if($new !~ /no/){
 	print STDERR "making backup of .bashrc,$shellconf and .cshrc and removing all entries of mirdeep in those files\n";
 	rem_mirdeep(".bashrc");
@@ -72,7 +70,6 @@ if(not $grep){
 	die "No grep found on system\n";
 }
 chomp $grep;
-
 
 my $gcc=`gcc --version 2>&1`;
 if($gcc !~ /(GCC)/i and $gcc !~ /clang/i){
@@ -92,6 +89,95 @@ if($gcc !~ /(GCC)/i and $gcc !~ /clang/i){
 	}
 }
 
+
+# --------------------------------------------------------------------------------------------
+# bootstrap_conda_perl: Some clusters ship a minimal Perl missing ExtUtils::MakeMaker.
+# That breaks CPAN-style installs (Font::TTF, PDF::API2). If conda/mamba/micromamba is available,
+# we create a local prefix with perl + required modules and re-exec this installer using that perl.
+# --------------------------------------------------------------------------------------------
+sub bootstrap_conda_perl{
+    my ($prefix)=@_;
+
+    # If we've already tried bootstrapping in this process chain, don't loop forever.
+    if($ENV{MIRDEEP2_PERL_BOOTSTRAP_DONE}){
+        my $ok_after = 1;
+        {
+            local $ENV{PERL5LIB}; delete $ENV{PERL5LIB};
+            local $ENV{PERL5OPT}; delete $ENV{PERL5OPT};
+            local $ENV{PERL_MB_OPT}; delete $ENV{PERL_MB_OPT};
+            local $ENV{PERL_MM_OPT}; delete $ENV{PERL_MM_OPT};
+            local $ENV{PERL_LOCAL_LIB_ROOT}; delete $ENV{PERL_LOCAL_LIB_ROOT};
+            $ok_after = system($^X, "-MExtUtils::MakeMaker", "-e", "1");
+        }
+        return 1 if($ok_after == 0);
+
+        print STDERR "\nError:\n\tPerl bootstrap was attempted, but ExtUtils::MakeMaker is still not available.\n"
+                   . "\tDiagnostics to run:\n"
+                   . "\t  $^X -V\n"
+                   . "\t  $^X -MExtUtils::MakeMaker -e 'print qq(OK\\n)'\n"
+                   . "\t  $prefix/bin/perl -MExtUtils::MakeMaker -e 'print qq(OK\\n)'\n\n";
+        return 0;
+    }
+
+    # Do we already have MakeMaker in the CURRENT perl interpreter ($^X)?
+    my $ok = 1;
+    {
+        local $ENV{PERL5LIB}; delete $ENV{PERL5LIB};
+        local $ENV{PERL5OPT}; delete $ENV{PERL5OPT};
+        local $ENV{PERL_MB_OPT}; delete $ENV{PERL_MB_OPT};
+        local $ENV{PERL_MM_OPT}; delete $ENV{PERL_MM_OPT};
+        local $ENV{PERL_LOCAL_LIB_ROOT}; delete $ENV{PERL_LOCAL_LIB_ROOT};
+        $ok = system($^X, "-MExtUtils::MakeMaker", "-e", "1");
+    }
+    return 1 if($ok == 0);
+
+    my $mm=`which micromamba 2>/dev/null`; chomp $mm;
+    my $mb=`which mamba 2>/dev/null`; chomp $mb;
+    my $cd=`which conda 2>/dev/null`; chomp $cd;
+
+    my $tool="";
+    if($mm){ $tool=$mm; }
+    elsif($mb){ $tool=$mb; }
+    elsif($cd){ $tool=$cd; }
+    else{ return 0; }
+
+    print STDERR "\nExtUtils::MakeMaker is missing from your current Perl.\n"
+               . "Attempting to bootstrap a local conda Perl in:\n\t$prefix\n\n";
+
+    my $perl="$prefix/bin/perl";
+
+    # Create prefix only if it doesn't already exist.
+    if(not -f $perl){
+        my $cmd="$tool create -y -p $prefix -c conda-forge -c bioconda "
+              . "perl perl-extutils-makemaker perl-font-ttf perl-pdf-api2";
+        my $ret=system($cmd);
+        return 0 if($ret);
+    }
+
+    return 0 if(not -f $perl);
+
+    # Verify MakeMaker using the conda perl with a clean env
+    my $ok2 = 1;
+    {
+        local $ENV{PERL5LIB}; delete $ENV{PERL5LIB};
+        local $ENV{PERL5OPT}; delete $ENV{PERL5OPT};
+        local $ENV{PERL_MB_OPT}; delete $ENV{PERL_MB_OPT};
+        local $ENV{PERL_MM_OPT}; delete $ENV{PERL_MM_OPT};
+        local $ENV{PERL_LOCAL_LIB_ROOT}; delete $ENV{PERL_LOCAL_LIB_ROOT};
+        $ok2 = system($perl, "-MExtUtils::MakeMaker", "-e", "1");
+    }
+    return 0 if($ok2 != 0);
+
+    print STDERR "Re-running installer using conda Perl: $perl\n\n";
+    $ENV{PATH} = "$prefix/bin:$ENV{PATH}";
+    $ENV{MIRDEEP2_PERL_BOOTSTRAP_DONE} = 1;
+    exec($perl, $0, @ARGV);
+    die "exec failed\n";
+}
+
+# Attempt bootstrap early (before CPAN module installs later)
+bootstrap_conda_perl("$dir/essentials/conda_perl") or exit;
+
 my %progs;
 $progs{bowtie}=0;
 $progs{RNAfold}=0;
@@ -108,7 +194,6 @@ my $dopt='';
 
 if($wget =~ /URL/i){
 	$dtool ="wget";
-
 }elsif($curl){
 	$dtool ="curl -L"; ## forces curl to follow redirections
 	$dopt=" -O";
@@ -126,14 +211,11 @@ if(not -d 'bin'){
 	}
 }
 
-
 my $err;
 my $dfile='';
 
 ##only attach to config file if not yet existing
 my $in=`$grep "$dir/bin" ~/.bashrc`;
-
-
 
 ## set install dir
 my $install_bin_dir="$dir/bin";
@@ -220,7 +302,7 @@ if(not $g){
 }
 
 my $in2;
-if(-f "~/.cshrc"){
+if(-f "$ENV{'HOME'}/.cshrc"){
 	$in2=`$grep "$install_bin_dir" ~/.cshrc`;
 	if(not $in2){
 		`echo 'setenv PATH \$PATH:$install_bin_dir' >> ~/.cshrc`;
@@ -263,7 +345,6 @@ if($bv =~ /(\d\.\d)\.0/){
 	$bv=$1;
 }
 
-
 my $ret=checkBIN("bowtie","Usage");
 if($ret == 0){
 	print STDERR "bowtie                                           already installed, nothing to do ...\n";
@@ -271,8 +352,6 @@ if($ret == 0){
 }else{
 	if(not -d "bowtie-$bowtie_version"){
 		## this needed to be added cause the authors removed the 0 in the version number for the filename
-
-
 		print STDERR "Downloading bowtie $bowtie_version binaries\n\n";
 		if($a =~ /Darwin/i){ ## download mac version
 			$bowtie = "bowtie-$bv-macos-x86_64.zip";
@@ -282,32 +361,24 @@ if($ret == 0){
 			$bowtie = "bowtie-$bv-src.zip";
 		}
 
+		# ---- FIX: avoid hard-coded mirrors and always save the correct filename ----
 		if(not -f $bowtie){
-			if(check("http://netcologne.dl.sourceforge.net/project/bowtie-bio/bowtie/$bowtie_version/$bowtie")){
-				$err=system("$dtool http://netcologne.dl.sourceforge.net/project/bowtie-bio/bowtie/$bowtie_version/$bowtie $dopt");
+			my $url_new = "https://sourceforge.net/projects/bowtie-bio/files/bowtie/$bowtie_version/$bowtie/download";
+			my $url_old = "https://sourceforge.net/projects/bowtie-bio/files/bowtie/old/$bowtie_version/$bowtie/download";
 
-				if($err){
-					die "\nError:\n\t$bowtie could not be downloaded\n\n\n";
-				}
-			}elsif(check("http://netcologne.dl.sourceforge.net/project/bowtie-bio/bowtie/old/$bowtie_version/$bowtie")){
-				$err=system("$dtool http://netcologne.dl.sourceforge.net/project/bowtie-bio/bowtie/old/$bowtie_version/$bowtie $dopt");
-				if($err){
-					die "\nError:\n\t$bowtie could not be downloaded\n\n\n";
-				}
-			}elsif(check("https://sourceforge.net/projects/bowtie-bio/files/bowtie/$bowtie_version/$bowtie",$bowtie)){
-				if(not -f $bowtie){
-					$err=system("$dtool https://sourceforge.net/projects/bowtie-bio/files/bowtie/$bowtie_version/$bowtie $dopt");
-				}else{
-					$err=0;
-				}
-				if($err){
-					die "\nError:\n\t$bowtie could not be downloaded\n\n\n";
-				}
+			$err = dl_to_file($url_new, $bowtie);
 
-			}else{
-				die "\nError:\n\t$bowtie not found on server http://netcologne.dl.sourceforge.net/project/bowtie-bio/bowtie/ \n\n\n";
+			# if download failed or looks too small (often HTML), try the old/ path
+			if($err || !-f $bowtie || -s $bowtie < 100000){
+				unlink $bowtie if(-f $bowtie);
+				$err = dl_to_file($url_old, $bowtie);
+			}
+
+			if($err || !-f $bowtie || -s $bowtie < 100000){
+				die "\nError:\n\t$bowtie could not be downloaded\n\tTried:\n\t$url_new\n\t$url_old\n\n\n";
 			}
 		}
+		# --------------------------------------------------------------------------
 
 		if(not -f "$bowtie"){
 			die "$bowtie download failed \nPlease try to download bowtie manually from here http://bowtie-bio.sourceforge.net/index.shtml";
@@ -329,7 +400,6 @@ if($ret == 0){
 		system("ln -s $dir/essentials/bowtie-$bv/bowtie* .");
 	}
 	chdir "$dir/essentials/";
-
 }
 
 $ret = checkBIN("RNAfold -h","usage");
@@ -381,16 +451,19 @@ if($ret == 0){
             `cp $i.c $i.c.orig`;
             `cp $PATCH/${i}_patch.c $i.c`;
         }
+        # Patch duplex.c for modern compilers (const mismatch warnings treated as errors)
+        if(-f "duplex.c"){
+            `cp duplex.c duplex.c.orig`;
+            `perl -pi -e 's/const short \*S1\[\]/short int *S1[]/g; s/const short \*S2\[\]/short int *S2[]/g' duplex.c`;
+        }
         chdir "../H";
         my $i='part_func';
         `cp $i.h $i.h.orig`;
         `cp $PATCH/${i}_patch.h $i.h`;
         chdir "../lib";
 
-
         print STDERR "compiling libRNA.a\n"; 
         `make libRNA.a 2>> ../install_error.log`;
-
 
         my $ok=1;
         if(not -f "libRNA.a"){
@@ -417,7 +490,6 @@ if($ret == 0){
             print STDERR "building RNAfold tool done\n";
         }
 
-
 		buildgood("$dir/essentials/ViennaRNA-1.8.4/install_dir/bin/RNAfold","RNAfold");
 
 		chdir("..");
@@ -429,38 +501,12 @@ if($ret == 0){
 	}
 }
 
-#$in = `$grep "$dir/essentials/ViennaRNA-1.8.4/install_dir/bin:*" ~/.bashrc`;
-#if(not $in){
-#    print STDERR "Vienna package path has been added to \$PATH variable\n";
-#    `echo 'export PATH=\$PATH:$dir/essentials/ViennaRNA-1.8.4/install_dir/bin' >> ~/.bashrc`;
-#}
-
-#$in = `$grep "$dir/essentials/ViennaRNA-1.8.4/install_dir/bin:*" ~/$shellconf`;
-#if(not $in){
-#    print STDERR "Vienna package path has been added to \$PATH variable\n";
-#    `echo 'export PATH=\$PATH:$dir/essentials/ViennaRNA-1.8.4/install_dir/bin' >> ~/$shellconf`;
-#}
-
-
-
-#$in2 = `$grep "$dir/essentials/ViennaRNA-1.8.4/install_dir/bin:*" ~/.cshrc`;
-#if(not $in2){
-#`echo 'setenv PATH \$PATH:$dir/essentials/ViennaRNA-1.8.4/install_dir/bin' >> ~/.cshrc`;
-#}
-
-
-
-
 $ret = checkBIN("randfold","let7");
 
-#my $randf = `randfold -h`;
-
-#if($randf =~ /no\s*randfold/i){ ## this should work
 if($ret == 0){
 	print STDERR "randfold\t\t\t\t\t already installed, nothing to do ...\n";
 	$progs{randfold}=1;
 }else{
-
 	$dfile="squid-1.9g.tar.gz";
 	if(not -f $dfile){
 		print STDERR "Downloading SQUID library now\n\n";
@@ -493,16 +539,75 @@ if($ret == 0){
 		chdir("..");
 	}
 
-	$dfile="randfold-2.0.tar.gz";
-	if(not -f $dfile ){
-		print STDERR "Downloading randfold now\n\n";
-		`$dtool http://bioinformatics.psb.ugent.be/supplementary_data/erbon/nov2003/downloads/randfold-2.0.tar.gz $dopt`;
+	my $rf_done=0;
+
+	# Try Bioconda first (micromamba/mamba/conda). This avoids dead/forbidden HTTP links.
+	if(install_randfold_conda("$dir/essentials/conda_randfold","$install_bin_dir")){
+		print STDERR "randfold\t\t\t\t\t installed via Bioconda, nothing more to do ...\n";
+		$progs{randfold}=1;
+		$rf_done=1;
 	}
 
-	if(not -f "randfold-2.0.tar.gz"){
-		die "randfold could not be downloaded\nPlease try to download randfold from here http://bioinformatics.psb.ugent.be/software/details/Randfold\n";
-	}
+	if(not $rf_done){
+		$dfile="randfold-2.0.tar.gz";
+		if(not -f $dfile ){
+			print STDERR "Downloading randfold now\n\n";
+			my $ok=0;
+			my $legacy_url="http://bioinformatics.psb.ugent.be/supplementary_data/erbon/nov2003/downloads/randfold-2.0.tar.gz";
+			my $r=dl_to_file($legacy_url,$dfile);
+			if(!$r and -f $dfile and -s $dfile > 1000){
+				$ok=1;
+			}
 
+			# Fallback: GitHub mirror (erbon7/randfold)
+			if(not $ok){
+				my $gh_url="https://github.com/erbon7/randfold/archive/refs/heads/master.tar.gz";
+				my $gh_tar="randfold-github-master.tar.gz";
+				my $r2=dl_to_file($gh_url,$gh_tar);
+				if(!$r2 and -f $gh_tar and -s $gh_tar > 10000){
+					$dfile=$gh_tar;
+					$ok=1;
+				}
+			}
+
+			if(not $ok){
+				die "randfold could not be downloaded\n"
+				. "Tried legacy host (may 403) and GitHub mirror.\n"
+				. "If you have conda/mamba available, install via: conda install -c bioconda randfold\n";
+			}
+		}
+
+		# Build from GitHub tarball (layout differs from legacy randfold-2.0 tarball)
+		if($dfile =~ /randfold-github-master\.tar\.gz/){
+			print STDERR "Installing randfold from GitHub source now\n\n";
+			`tar xzf $dfile`;
+			my $rfdir="randfold-master";
+			if(not -d $rfdir){
+				my $ls=`ls -d randfold-* 2>/dev/null | head -n1`;
+				chomp $ls;
+				$rfdir=$ls if($ls);
+			}
+			if(not -d $rfdir){
+				die "Could not find extracted randfold directory after unpacking $dfile\n";
+			}
+
+			chdir("$rfdir/src");
+			if(-d "squid-1.9g"){
+				chdir("squid-1.9g");
+				`./configure 1>>../../install.log 2>>../../install_error.log`;
+				`make CFLAGS="\$CFLAGS -Wno-implicit-function-declaration" 1>>../../install.log 2>>../../install_error.log`;
+				chdir("..");
+			}
+			`make 1>>../../install.log 2>>../../install_error.log`;
+			buildgood("$dir/essentials/$rfdir/src/randfold","randfold");
+			chdir "$install_bin_dir";
+			if(not -f "randfold"){
+				system("ln -s $dir/essentials/$rfdir/src/randfold .");
+			}
+			chdir "$dir/essentials/";
+			$rf_done=1;
+		}else{
+			# Legacy randfold-2.0 tarball build (original logic)
 	if(not -d "randfold-2.0" and -f "randfold-2.0.tar.gz"){
 		print STDERR "Installing randfold now\n\n";
 		`tar xzf randfold-2.0.tar.gz`;
@@ -523,7 +628,6 @@ if($ret == 0){
 		close OUT;
 
 		## added so we can make it run on MacOSX as well.
-
 		open IN,"<fold.c" or die "File fold.c not found\n";
 		open OUT,">fold.c.new" or die "Cannot generate file fold.c.new\n";
 		while(<IN>){
@@ -537,7 +641,6 @@ if($ret == 0){
 		}
 		close OUT;
 
-
 		`mv fold.c fold.c.orig`;
 		`mv fold.c.new fold.c`;
 
@@ -549,30 +652,15 @@ if($ret == 0){
 		chdir("..");
 	}
 
-#    $in = `$grep "$dir/essentials/randfold-2.0:*" ~/.bashrc`;
-#    if(not $in){
-#        print STDERR "Randfold path has been added to \$PATH variable\n";
-#        `echo 'export PATH=\$PATH:$dir/essentials/randfold-2.0' >> ~/.bashrc`;
-#    }
-
-#    $in = `$grep "$dir/essentials/randfold-2.0:*" ~/$shellconf`;
-#    if(not $in){
-#        print STDERR "Randfold path has been added to \$PATH variable\n";
-#        `echo 'export PATH=\$PATH:$dir/essentials/randfold-2.0' >> ~/$shellconf`;
-#}
-
-
-#    $in2 = `$grep "$dir/essentials/randfold-2.0:*" ~/.cshrc`;
-#    if($in2){
-	#`echo 'setenv PATH \$PATH:$dir/essentials/randfold-2.0' >> ~/.cshrc`;
-	#    }
-	chdir "$install_bin_dir";
-	if(not -f "randfold"){
-		system("ln -s $dir/essentials/randfold-2.0/randfold .");
+			chdir "$install_bin_dir";
+			if(not -f "randfold"){
+				system("ln -s $dir/essentials/randfold-2.0/randfold .");
+			}
+			chdir "$dir/essentials/";
+			$rf_done=1;
+		}
 	}
-	chdir "$dir/essentials/"
 }
-
 
 ##check for zlib perl
 my $zlib=`perl -e 'use Compress::Zlib;' 2>&1`;
@@ -582,11 +670,7 @@ if(not $zlib){
 	$progs{zlib}=1;
 }else{
 	die "please install Compress::Zlib by using CPAN before you proceed\n";
-
 }
-
-#my $pdfapi=`perl -e 'use PDF::API2;' 2>&1`;
-
 
 $ret = checkBIN("perl -e \'use Font::TTF; print \"installed\";\'","installed");
 
@@ -635,7 +719,7 @@ if($ret == 0){
 	}
 	close IN;
 
-	`make install 1>>../install.log 2>>..install_error.log`;
+	`make install 1>>../install.log 2>>../install_error.log`;
 
 	$ret = checkBIN("perl -e \'use Font::TTF; print \"installed\";\'","installed");
 
@@ -646,8 +730,6 @@ if($ret == 0){
 
 	chdir("..");
 }
-
-
 
 $ret = checkBIN("perl -e \'use PDF::API2; print \"installed\";\'","installed");
 
@@ -681,7 +763,7 @@ if($ret == 0){
 	chdir("$version");
 
 	`perl Makefile.PL INSTALL_BASE=$ENV{'HOME'}/perl5 LIB=$dir/lib/perl5`;
-	`make 1>>../install.log 2>>..install_error.log`;
+	`make 1>>../install.log 2>>../install_error.log`;
 	`mv Makefile Makefile.orig`;
 
 	open IN,"Makefile.orig" or die "No Makefile found\n";
@@ -695,7 +777,7 @@ if($ret == 0){
 	}
 	close IN;
 
-	`make install 1>>../install.log 2>>..install_error.log`;
+	`make install 1>>../install.log 2>>../install_error.log`;
 
 	$ret = checkBIN("perl -e \'use PDF::API2; print \"installed\";\'","installed");
 
@@ -731,9 +813,7 @@ if($sum == 6){
 	";
 }
 
-
 exit;
-
 
 sub rem_mirdeep{
 	my ($file)=@_;
@@ -755,7 +835,6 @@ sub rem_mirdeep{
 					}
 				}
 				if($file !~ /.cshrc/){
-
 					if($tmp !~ /PATH=\$PATH$/ and $tmp !~ /PERL5LIB=\$PERL5LIB\s*$/){
 						print OUT "$tmp\n";
 					}
@@ -773,7 +852,6 @@ sub rem_mirdeep{
 	}
 }
 
-
 sub checkBIN{
 	my ($a,$b) = @_;
 	my $e = system("$a> tmp 2>tmp2");
@@ -783,7 +861,6 @@ sub checkBIN{
 	while(<IN>){
 		if(/$b/i){
 			$found =0;
-
 		}
 	}
 	close IN;
@@ -792,14 +869,12 @@ sub checkBIN{
 		while(<IN>){
 			if(/$b/i){
 				$found =0;
-
 			}
 		}
 	}
 	close IN;
 	return $found;
 }
-
 
 sub check{
 	my ($url,$file) = @_;
@@ -821,7 +896,6 @@ sub check{
 				$out=0;
 			}
 		}
-
 	}else{
 		die "No download tool found\nplease install wget or curl\n";
 	}
@@ -832,7 +906,6 @@ sub check{
 		return 1;
 	}
 }
-
 
 sub buildgood{
 	if(-f $_[0]){
@@ -845,4 +918,55 @@ sub buildgood{
 	}
 }
 
+# Download helper that ALWAYS saves to the requested filename
+# (fixes SourceForge /download being saved as "download")
+sub install_randfold_conda{
+    my ($prefix,$bindir)=@_;
+    my $mm=`which micromamba 2>/dev/null`; chomp $mm;
+    my $mb=`which mamba 2>/dev/null`; chomp $mb;
+    my $cd=`which conda 2>/dev/null`; chomp $cd;
 
+    my $tool="";
+    if($mm){ $tool=$mm; }
+    elsif($mb){ $tool=$mb; }
+    elsif($cd){ $tool=$cd; }
+    else{ return 0; }
+
+    # install into a local prefix without touching the user's base env
+    if(-d $prefix){ system("rm -rf $prefix"); }
+
+    my $cmd="$tool create -y -p $prefix -c conda-forge -c bioconda randfold";
+    my $ret=system($cmd);
+    return 0 if($ret);
+
+    my $rf="$prefix/bin/randfold";
+    return 0 if(not -f $rf);
+
+    # link randfold into the install bin dir
+    my $cwd=`pwd`; chomp $cwd;
+    chdir $bindir;
+    unlink "randfold" if(-l "randfold" or -f "randfold");
+    system("ln -s $rf randfold");
+    chdir $cwd;
+
+    return 1;
+}
+
+sub dl_to_file{
+	my ($url, $outfile) = @_;
+
+	unlink $outfile if(-f $outfile);
+
+	my $ret;
+	if($dtool =~ /^wget\b/){
+		# Force output name (avoids saving as "download")
+		$ret = system('wget','-O',$outfile,$url);
+	}elsif($dtool =~ /curl/){
+		# Follow redirects and force output name
+		$ret = system('curl','-L','-o',$outfile,$url);
+	}else{
+		die "No commandline download tool found on your system. Please install wget or curl on your machine\n";
+	}
+
+	return $ret;
+}
